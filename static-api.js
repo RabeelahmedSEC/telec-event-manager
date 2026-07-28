@@ -53,6 +53,57 @@
   }
   const extractJson = text => { const m=text.match(/\{[\s\S]*\}/); if(!m) throw new Error('AI response did not contain event data.'); return JSON.parse(m[0]); };
 
+  const pick = (o,...keys) => { for (const k of keys) if (o && o[k] != null && String(o[k]).trim() !== '') return o[k]; return ''; };
+  const normaliseRemoteEvent = (row,index=0) => {
+    if (Array.isArray(row)) {
+      row = {eventDate:row[0],eventTime:row[1],familyPersonName:row[2],eventType:row[3],day:row[4],venueLocation:row[5],city:row[6],googleMapsLink:row[7],details:row[8],status:row[9]};
+    }
+    const e=cleanEvent({
+      eventDate:pick(row,'eventDate','Event Date','date','Date'),
+      eventTime:pick(row,'eventTime','Event Time','time','Time'),
+      familyPersonName:pick(row,'familyPersonName','Family / Person Name','person','Person','name','Name'),
+      eventType:pick(row,'eventType','Event Type','type','Type')||'Meeting',
+      day:pick(row,'day','Day'),
+      venueLocation:pick(row,'venueLocation','Venue / Location','venue','Venue','location','Location'),
+      city:pick(row,'city','City'), googleMapsLink:pick(row,'googleMapsLink','Google Maps','mapsLink'),
+      details:pick(row,'details','Details','Additional Details'), status:pick(row,'status','Status')||'Pending', posterName:pick(row,'posterName')
+    });
+    if (/^\d{1,2}[\/-]\d{1,2}[\/-]\d{4}$/.test(e.eventDate)) {
+      const [d,m,y]=e.eventDate.split(/[\/-]/); e.eventDate=`${y}-${m.padStart(2,'0')}-${d.padStart(2,'0')}`;
+    }
+    if (/^\d{1,2}:\d{2}\s*(am|pm)$/i.test(e.eventTime)) {
+      const m=e.eventTime.match(/(\d{1,2}):(\d{2})\s*(am|pm)/i); let h=+m[1]; if(m[3].toLowerCase()==='pm'&&h<12)h+=12;if(m[3].toLowerCase()==='am'&&h===12)h=0;e.eventTime=`${String(h).padStart(2,'0')}:${m[2]}`;
+    }
+    return {id:String(pick(row,'id','ID')||`sheet-${index}-${e.eventDate}-${e.eventTime}-${e.familyPersonName}`),...e,createdAt:pick(row,'createdAt')||now(),updatedAt:pick(row,'updatedAt')||now(),createdBy:pick(row,'createdBy')||'Google Sheet',updatedBy:pick(row,'updatedBy')||'Google Sheet',revision:Number(pick(row,'revision')||1),remote:true};
+  };
+  async function loadSheetEvents(url){
+    if(!url) return [];
+    const attempts=[
+      {method:'POST',body:JSON.stringify({action:'getEvents'})},
+      {method:'POST',body:JSON.stringify({action:'listEvents'})},
+      {method:'GET',url:url+(url.includes('?')?'&':'?')+'action=getEvents'}
+    ];
+    let last='';
+    for(const a of attempts){
+      try{
+        const r=await originalFetch(a.url||url,{method:a.method,headers:a.method==='POST'?{'Content-Type':'text/plain;charset=utf-8'}:undefined,body:a.body});
+        const d=await r.json();
+        if(!r.ok||d.success===false||d.ok===false){last=d.message||'Unable to read Google Sheet';continue;}
+        const rows=Array.isArray(d)?d:(d.events||d.data||d.rows||[]);
+        if(Array.isArray(rows)) return rows.map(normaliseRemoteEvent).filter(e=>e.eventDate&&e.eventTime&&e.familyPersonName);
+      }catch(e){last=e.message}
+    }
+    console.warn('Google Sheet read unavailable:',last); return [];
+  }
+  const mergeEvents = (local,remote) => {
+    const map=new Map();
+    for(const e of [...remote,...local]){
+      const key=[e.eventDate,e.eventTime,String(e.familyPersonName||'').toLowerCase(),String(e.venueLocation||'').toLowerCase()].join('|');
+      map.set(key,e);
+    }
+    return [...map.values()];
+  };
+
   window.fetch = async (input,opt={}) => {
     const raw=typeof input==='string'?input:input.url;
     const u=new URL(raw,location.href);
@@ -64,7 +115,11 @@
       localStorage.setItem(SESSION_KEY,JSON.stringify({id:found.id})); audit(db,found,'LOGIN','Successful login'); save(db); return json({token:'github-pages-demo'});
     }
     const user=authUser(); if(!user)return json({error:'Session expired. Please sign in again.'},401);
-    if(path==='/api/bootstrap') return json({user:safeUser(user),events:db.events,users:user.role==='admin'?db.users.map(safeUser):[],audit:user.role==='admin'?db.audit.slice(0,200):[],network:['GitHub Pages Demo — browser storage','Optional Google Sheet sync'],settings:user.role==='admin'?{geminiConfigured:!!db.settings.geminiApiKey,appsScriptUrl:db.settings.appsScriptUrl||'',sheetConfigured:!!db.settings.appsScriptUrl,autoSheetSync:db.settings.autoSheetSync!==false}:{}});
+    if(path==='/api/bootstrap'){
+      const remoteEvents=await loadSheetEvents(db.settings.appsScriptUrl);
+      const allEvents=mergeEvents(db.events,remoteEvents);
+      return json({user:safeUser(user),events:allEvents,users:user.role==='admin'?db.users.map(safeUser):[],audit:user.role==='admin'?db.audit.slice(0,200):[],network:['GitHub Pages — multi-device Google Sheet sync',remoteEvents.length?`${remoteEvents.length} events loaded from Google Sheet`:'Google Sheet connected; no shared events returned'],settings:user.role==='admin'?{geminiConfigured:!!db.settings.geminiApiKey,appsScriptUrl:db.settings.appsScriptUrl||'',sheetConfigured:!!db.settings.appsScriptUrl,autoSheetSync:db.settings.autoSheetSync!==false}:{}});
+    }
     if(path==='/api/logout'){ localStorage.removeItem(SESSION_KEY); return json({ok:true}); }
     if(path==='/api/events'&&method==='POST'){
       const e=cleanEvent(data); if(!e.eventDate||!e.eventTime||!e.familyPersonName||!e.eventType)return json({error:'Event Date, Event Time, Family / Person Name and Event Type are required.'},400);
