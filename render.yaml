@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: telec-event-manager
+    runtime: docker
+    plan: starter
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: TELEC_DATA_DIR
+        value: /var/data/telec
+      - key: TELEC_BACKUP_DIR
+        value: /var/data/telec-backups
+    disk:
+      name: telec-data
+      mountPath: /var/data
+      sizeGB: 1

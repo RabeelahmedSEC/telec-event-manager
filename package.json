@@ -1,0 +1,49 @@
+{
+  "name": "telec-event-manager-2",
+  "version": "2.6.0",
+  "description": "TELEC Smart Event Manager - desktop, network and cloud deployment ready",
+  "main": "main.js",
+  "author": "Rabeel Ahmed Siddiqui",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "server": "node server.js",
+    "build:win": "electron-builder --win dir",
+    "cloud": "node server.js",
+    "start:local": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.21.2"
+  },
+  "devDependencies": {
+    "electron": "^36.4.0",
+    "electron-builder": "^26.0.12"
+  },
+  "build": {
+    "appId": "pk.com.telec.eventmanager2",
+    "productName": "TELEC Smart Event Manager 2.2",
+    "asar": true,
+    "files": [
+      "main.js",
+      "server.js",
+      "package.json",
+      "public/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "data",
+        "to": "data"
+      },
+      {
+        "from": "backups",
+        "to": "backups"
+      }
+    ],
+    "win": {
+      "target": "dir"
+    }
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
