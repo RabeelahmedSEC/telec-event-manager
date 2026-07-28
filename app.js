@@ -58,3 +58,66 @@ $('testSheet').onclick=async()=>{try{$('sheetState').textContent='Testing Google
 function renderAudit(){if(!user||user.role!=='admin')return;$('auditList').innerHTML=audit.map(a=>`<div class="audit-row"><span>${new Date(a.at).toLocaleString('en-GB')}</span><b>${esc(a.user)}</b><span>${esc(a.action)}</span><span>${esc(a.detail)}</span></div>`).join('')}$('backupBtn').onclick=async()=>{try{await api('/api/backup',{method:'POST'});toast('Backup created')}catch(e){toast(e.message,true)}};
 function iso(d){return new Date(d.getTime()-d.getTimezoneOffset()*60000).toISOString().slice(0,10)}function sortEvent(a,b){return(a.eventDate+a.eventTime).localeCompare(b.eventDate+b.eventTime)}function fmtDate(s){return s?new Date(s+'T00:00:00').toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'}):''}function fmtTime(s){if(!s)return'';const[h,m]=s.split(':');return new Date(2000,0,1,h,m).toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'})}function esc(s){return String(s??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]))}
 clearForm();if(token)load();
+
+// Paste Email / WhatsApp schedule parser
+let parsedScheduleEvents=[];
+function normaliseScheduleText(text){return String(text||'').replace(/\r/g,'').replace(/[–—]/g,'-').trim()}
+function parseHeaderDate(text){
+  const months={jan:1,january:1,feb:2,february:2,mar:3,march:3,apr:4,april:4,may:5,jun:6,june:6,jul:7,july:7,aug:8,august:8,sep:9,sept:9,september:9,oct:10,october:10,nov:11,november:11,dec:12,december:12};
+  let m=text.match(/(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)?\s*,?\s*(\d{1,2})(?:st|nd|rd|th)?\s+([a-z]+)\s+(20\d{2})/i);
+  if(!m)m=text.match(/(20\d{2})[-\/]([01]?\d)[-\/]([0-3]?\d)/);
+  if(!m)return'';
+  if(/^20/.test(m[1]))return `${m[1]}-${String(m[2]).padStart(2,'0')}-${String(m[3]).padStart(2,'0')}`;
+  const mon=months[m[2].toLowerCase()]; if(!mon)return'';
+  return `${m[3]}-${String(mon).padStart(2,'0')}-${String(m[1]).padStart(2,'0')}`;
+}
+function to24Hour(h,m,ampm){h=Number(h);m=Number(m||0);const ap=String(ampm||'').toLowerCase();if(ap==='pm'&&h<12)h+=12;if(ap==='am'&&h===12)h=0;return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`}
+function smartCity(venue){const v=venue.toLowerCase();if(/pindi|rawalpindi/.test(v))return'Rawalpindi';if(/islamabad|nhq|fauji foundation|dgp army/.test(v))return'Islamabad';if(/karachi|telec office/.test(v))return'Karachi';if(/lahore/.test(v))return'Lahore';return''}
+function cleanMeetingLine(line){return line.replace(/^\s*\d+\s*[).:-]\s*/,'').replace(/\s+/g,' ').trim()}
+function parseScheduleText(text){
+  text=normaliseScheduleText(text);const date=parseHeaderDate(text);if(!date)throw new Error('Date not found. Add a heading like: Wednesday 29 July 2026');
+  let lines=text.split(/\n+/).map(cleanMeetingLine).filter(Boolean);
+  lines=lines.filter(x=>!parseHeaderDate(x)||/\b(?:at|meeting|visit|dinner|lunch|seminar|conference)\b/i.test(x));
+  const out=[];
+  for(const line of lines){
+    const tm=[...line.matchAll(/\b(?:at\s*)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b/ig)].pop();
+    if(!tm)continue;
+    const eventTime=to24Hour(tm[1],tm[2],tm[3]);
+    let before=line.slice(0,tm.index).replace(/\s+at\s*$/i,'').trim();
+    let after=line.slice(tm.index+tm[0].length).trim();
+    let venue='',person='';
+    const withMatch=before.match(/(?:meeting|visit|lunch|dinner|session|conference|seminar)\s+with\s+(.+?)(?:\s+at\s+(.+))?$/i);
+    if(withMatch){person=withMatch[1].trim();venue=(withMatch[2]||'').trim()}
+    else {
+      const atParts=before.split(/\s+at\s+/i);
+      const subject=atParts.shift()||'';venue=atParts.join(' at ').trim();
+      person=subject.replace(/^(?:meeting|visit|lunch|dinner|session|conference|seminar)\s+(?:with\s+)?/i,'').trim();
+    }
+    if(after&&!venue)venue=after.replace(/^at\s+/i,'').trim();
+    if(after&&venue&&!venue.toLowerCase().includes(after.toLowerCase()))venue=(venue+' '+after).trim();
+    person=person.replace(/\s+at\s+.+$/i,'').replace(/\s*,\s*/g,', ').trim();
+    if(!person)person='Scheduled Meeting';
+    out.push({eventDate:date,eventTime,familyPersonName:person,eventType:/visit/i.test(line)?'Visit':/dinner/i.test(line)?'Dinner':/lunch/i.test(line)?'Lunch':'Meeting',day:new Date(date+'T00:00:00').toLocaleDateString('en-GB',{weekday:'long'}),venueLocation:venue,city:smartCity(venue),googleMapsLink:'',details:line,status:'Pending'});
+  }
+  return out.sort(sortEvent);
+}
+function renderSchedulePreview(){
+  const box=$('schedulePreview');
+  if(!parsedScheduleEvents.length){box.innerHTML='';return}
+  box.innerHTML=`<div class="schedule-preview"><b>${parsedScheduleEvents.length} event${parsedScheduleEvents.length===1?'':'s'} detected — arranged by time</b><table><thead><tr><th>Date</th><th>Time</th><th>Person / Subject</th><th>Venue</th><th>City</th><th></th></tr></thead><tbody>${parsedScheduleEvents.map((e,i)=>`<tr><td><input type="date" value="${esc(e.eventDate)}" onchange="updateParsed(${i},'eventDate',this.value)"></td><td><input type="time" value="${esc(e.eventTime)}" onchange="updateParsed(${i},'eventTime',this.value)"></td><td><input class="wide" value="${esc(e.familyPersonName)}" onchange="updateParsed(${i},'familyPersonName',this.value)"></td><td><input class="wide" value="${esc(e.venueLocation)}" onchange="updateParsed(${i},'venueLocation',this.value)"></td><td><input value="${esc(e.city)}" onchange="updateParsed(${i},'city',this.value)"></td><td><button type="button" class="danger" onclick="removeParsed(${i})">Remove</button></td></tr>`).join('')}</tbody></table><div class="save-all-row"><button type="button" id="saveAllParsed" class="primary">Save All Events</button></div></div>`;
+  $('saveAllParsed').onclick=saveAllParsedEvents;
+}
+window.updateParsed=(i,k,v)=>{parsedScheduleEvents[i][k]=v;if(k==='eventDate')parsedScheduleEvents[i].day=new Date(v+'T00:00:00').toLocaleDateString('en-GB',{weekday:'long'});parsedScheduleEvents.sort(sortEvent);renderSchedulePreview()};
+window.removeParsed=i=>{parsedScheduleEvents.splice(i,1);renderSchedulePreview()};
+$('parseSchedule').onclick=()=>{try{parsedScheduleEvents=parseScheduleText($('scheduleText').value);if(!parsedScheduleEvents.length)throw new Error('No meeting time found. Use times such as 10:30 AM or 3 PM.');$('scheduleStatus').className='meta parse-ok';$('scheduleStatus').textContent=`${parsedScheduleEvents.length} events detected successfully.`;renderSchedulePreview()}catch(e){parsedScheduleEvents=[];$('scheduleStatus').className='meta parse-error';$('scheduleStatus').textContent=e.message;renderSchedulePreview();toast(e.message,true)}};
+$('clearSchedule').onclick=()=>{$('scheduleText').value='';parsedScheduleEvents=[];$('scheduleStatus').textContent='';renderSchedulePreview()};
+async function saveAllParsedEvents(){
+  if(!parsedScheduleEvents.length)return;
+  const btn=$('saveAllParsed');btn.disabled=true;btn.textContent='Saving...';let ok=0,failed=[];
+  for(const e of [...parsedScheduleEvents].sort(sortEvent)){
+    try{await api('/api/events',{method:'POST',body:JSON.stringify(e)});ok++}catch(err){failed.push(`${e.eventTime} ${e.familyPersonName}: ${err.message}`)}
+  }
+  btn.disabled=false;btn.textContent='Save All Events';
+  if(failed.length)toast(`${ok} saved; ${failed.length} failed.`,true);else toast(`${ok} events saved in date and time sequence.`);
+  if(ok){$('scheduleText').value='';parsedScheduleEvents=[];renderSchedulePreview();await load();show('events')}
+}
