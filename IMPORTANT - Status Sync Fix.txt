@@ -1,0 +1,26 @@
+TELEC EVENT MANAGER — STATUS SYNC FIX
+
+Problem fixed:
+Confirmed/Pending status changes now sync through Google Sheet and appear the same on laptop and mobile.
+
+STEP 1 — GitHub
+Replace/upload these website files:
+- static-api.js
+- app.js
+- index.html
+- style.css
+
+STEP 2 — Google Sheet Apps Script (required)
+1. Open the connected Google Sheet.
+2. Extensions > Apps Script.
+3. Delete the old code and paste the complete Code.gs from this ZIP.
+4. Click Deploy > Manage deployments.
+5. Click Edit (pencil), select New version, then Deploy.
+6. Keep access set to Anyone.
+
+STEP 3 — Refresh
+- On laptop press Ctrl + F5.
+- On mobile close the browser tab, reopen the site, and refresh.
+- Open the confirmed event on laptop and Save once again if needed.
+
+After this, the same status will display on both devices.

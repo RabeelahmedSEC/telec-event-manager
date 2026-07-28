@@ -1,0 +1,11 @@
+MULTI-DEVICE SYNC SETUP
+
+1. GitHub repository mein index.html, app.js, static-api.js aur style.css upload/replace karein.
+2. Apni Google Sheet kholein > Extensions > Apps Script.
+3. Purana Code.gs select karke is ZIP wali Code.gs ka tamam code paste karein.
+4. Deploy > Manage deployments > Edit (pencil) > New version > Deploy.
+5. Access "Anyone" rehna chahiye. Existing Web App URL same reh sakta hai.
+6. Website desktop aur mobile par Ctrl+F5 / refresh karein.
+7. Desktop se pehle se add 4 local events ko Google Sheet mein lane ke liye unhein ek dafa dobara Save All karein, ya Events sheet mein maujood entries verify karein.
+
+Important: Jo events Google Sheet mein saved honge woh mobile aur desktop dono par show honge.

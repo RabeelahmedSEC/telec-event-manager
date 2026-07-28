@@ -1,0 +1,14 @@
+TELEC Smart Event Manager - Final Map Link Update
+
+1. Extract this ZIP.
+2. Upload/replace ALL files in your GitHub repository.
+3. Commit changes.
+4. Wait 1-2 minutes.
+5. On laptop press Ctrl + F5.
+6. On mobile close the website tab, reopen it, and refresh.
+
+Result:
+- Open any date/event on the mobile dashboard.
+- If a Google Maps link was saved in that event, a blue "Open Location" button will appear.
+- Tap it to open the same saved Google Maps link.
+- No new map link is generated.

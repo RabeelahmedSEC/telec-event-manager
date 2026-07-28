@@ -95,14 +95,26 @@
     }
     console.warn('Google Sheet read unavailable:',last); return [];
   }
+  const eventKey = e => [e.eventDate,e.eventTime,String(e.familyPersonName||'').toLowerCase(),String(e.venueLocation||'').toLowerCase()].join('|');
   const mergeEvents = (local,remote) => {
     const map=new Map();
     for(const e of [...remote,...local]){
-      const key=[e.eventDate,e.eventTime,String(e.familyPersonName||'').toLowerCase(),String(e.venueLocation||'').toLowerCase()].join('|');
-      map.set(key,e);
+      const key=eventKey(e), current=map.get(key);
+      if(!current || Number(e.revision||1)>Number(current.revision||1) || (Number(e.revision||1)===Number(current.revision||1) && String(e.updatedAt||'')>String(current.updatedAt||''))) map.set(key,e);
     }
     return [...map.values()];
   };
+  async function reconcileLocalUpdates(db,remoteEvents){
+    if(!db.settings.autoSheetSync||!db.settings.appsScriptUrl||!remoteEvents.length) return;
+    const remoteByKey=new Map(remoteEvents.map(e=>[eventKey(e),e]));
+    for(const local of db.events){
+      const remote=remoteByKey.get(eventKey(local));
+      if(remote && Number(local.revision||1)>Number(remote.revision||1)){
+        try{ await sheetCall(db.settings.appsScriptUrl,{action:'updateEvent',event:local,...local}); }
+        catch(err){ console.warn('Google Sheet update reconciliation failed:',err.message); }
+      }
+    }
+  }
 
   window.fetch = async (input,opt={}) => {
     const raw=typeof input==='string'?input:input.url;
@@ -116,7 +128,9 @@
     }
     const user=authUser(); if(!user)return json({error:'Session expired. Please sign in again.'},401);
     if(path==='/api/bootstrap'){
-      const remoteEvents=await loadSheetEvents(db.settings.appsScriptUrl);
+      let remoteEvents=await loadSheetEvents(db.settings.appsScriptUrl);
+      await reconcileLocalUpdates(db,remoteEvents);
+      remoteEvents=await loadSheetEvents(db.settings.appsScriptUrl);
       const allEvents=mergeEvents(db.events,remoteEvents);
       return json({user:safeUser(user),events:allEvents,users:user.role==='admin'?db.users.map(safeUser):[],audit:user.role==='admin'?db.audit.slice(0,200):[],network:['GitHub Pages — multi-device Google Sheet sync',remoteEvents.length?`${remoteEvents.length} events loaded from Google Sheet`:'Google Sheet connected; no shared events returned'],settings:user.role==='admin'?{geminiConfigured:!!db.settings.geminiApiKey,appsScriptUrl:db.settings.appsScriptUrl||'',sheetConfigured:!!db.settings.appsScriptUrl,autoSheetSync:db.settings.autoSheetSync!==false}:{}});
     }
@@ -130,11 +144,20 @@
     }
     const eventMatch=path.match(/^\/api\/events\/([^/]+)$/);
     if(eventMatch&&method==='PUT'){
-      const i=db.events.findIndex(x=>x.id===eventMatch[1]); if(i<0)return json({error:'Event not found.'},404); if(+data.revision!==db.events[i].revision)return json({error:'Another update was detected. Refresh and try again.'},409);
-      const e=cleanEvent(data); db.events[i]={...db.events[i],...e,updatedAt:now(),updatedBy:user.name,revision:db.events[i].revision+1}; audit(db,user,'EVENT_UPDATED',`${e.familyPersonName} - ${e.eventType}`); save(db); return json(db.events[i]);
+      const e=cleanEvent(data); let i=db.events.findIndex(x=>x.id===eventMatch[1]);
+      const base=i>=0?db.events[i]:{id:eventMatch[1],createdAt:now(),createdBy:user.name,revision:Number(data.revision||1)};
+      if(i>=0 && +data.revision!==Number(base.revision||1))return json({error:'Another update was detected. Refresh and try again.'},409);
+      const updated={...base,...e,id:eventMatch[1],updatedAt:now(),updatedBy:user.name,revision:Number(base.revision||1)+1};
+      if(i>=0) db.events[i]=updated; else db.events.push(updated);
+      audit(db,user,'EVENT_UPDATED',`${e.familyPersonName} - ${e.eventType}`); save(db);
+      let sheetSync={success:false,skipped:true};
+      if(db.settings.autoSheetSync&&db.settings.appsScriptUrl){try{await sheetCall(db.settings.appsScriptUrl,{action:'updateEvent',event:updated,...updated});sheetSync={success:true}}catch(err){sheetSync={success:false,error:err.message}}}
+      return json({...updated,sheetSync});
     }
     if(eventMatch&&method==='DELETE'){
-      if(user.role!=='admin')return json({error:'Administrator access required.'},403); const i=db.events.findIndex(x=>x.id===eventMatch[1]); if(i<0)return json({error:'Event not found.'},404); const [e]=db.events.splice(i,1); audit(db,user,'EVENT_DELETED',e.familyPersonName); save(db); return json({ok:true});
+      if(user.role!=='admin')return json({error:'Administrator access required.'},403); const i=db.events.findIndex(x=>x.id===eventMatch[1]); const e=i>=0?db.events.splice(i,1)[0]:{id:eventMatch[1],familyPersonName:'Shared event'}; audit(db,user,'EVENT_DELETED',e.familyPersonName); save(db);
+      let sheetSync={success:false,skipped:true}; if(db.settings.autoSheetSync&&db.settings.appsScriptUrl){try{await sheetCall(db.settings.appsScriptUrl,{action:'deleteEvent',id:eventMatch[1]});sheetSync={success:true}}catch(err){sheetSync={success:false,error:err.message}}}
+      return json({ok:true,sheetSync});
     }
     if(path==='/api/users'&&method==='POST'){
       if(user.role!=='admin')return json({error:'Administrator access required.'},403); const username=String(data.username||'').trim(); if(!username||!data.name||String(data.password||'').length<8)return json({error:'Complete all user fields. Password must be at least 8 characters.'},400); if(db.users.some(x=>x.username.toLowerCase()===username.toLowerCase()))return json({error:'Username already exists.'},409);
