@@ -92,7 +92,19 @@
     if(path==='/api/settings'&&method==='POST'){
       if(user.role!=='admin')return json({error:'Administrator access required.'},403); if(String(data.geminiApiKey||'').trim())db.settings.geminiApiKey=String(data.geminiApiKey).trim(); if('appsScriptUrl'in data)db.settings.appsScriptUrl=String(data.appsScriptUrl||'').trim(); if(typeof data.autoSheetSync==='boolean')db.settings.autoSheetSync=data.autoSheetSync; audit(db,user,'SETTINGS_UPDATED','Demo connections updated'); save(db); return json({ok:true,geminiConfigured:!!db.settings.geminiApiKey,sheetConfigured:!!db.settings.appsScriptUrl,appsScriptUrl:db.settings.appsScriptUrl,autoSheetSync:db.settings.autoSheetSync!==false});
     }
-    if(path==='/api/settings/test-sheet'&&method==='POST'){try{const d=await sheetCall(String(data.appsScriptUrl||'').trim()||db.settings.appsScriptUrl);return json({ok:true,message:d.message||'Google Sheet connection successful.'})}catch(e){return json({error:e.message},400)}}
+    if(path==='/api/settings/test-sheet'&&method==='POST'){
+      try{
+        const d=await sheetCall(String(data.appsScriptUrl||'').trim()||db.settings.appsScriptUrl);
+        return json({ok:true,message:d.message||'Google Sheet connection successful.'});
+      }catch(e){
+        // Older TELEC Apps Script deployments do not implement action "test".
+        // Receiving this response still proves that the deployed Web App URL is reachable.
+        if(/invalid action:\s*test/i.test(String(e.message||''))){
+          return json({ok:true,message:'Google Sheet Web App is active. Test action is not required; new events will sync using addEvent.'});
+        }
+        return json({error:e.message},400);
+      }
+    }
     if(path==='/api/settings/test-gemini'&&method==='POST'){try{const r=await geminiGenerate(String(data.geminiApiKey||'').trim()||db.settings.geminiApiKey,[{text:'Reply with only the word OK.'}]);return json({ok:true,message:`Gemini connection successful (${r.model}).`})}catch(e){return json({error:e.message},400)}}
     if(path==='/api/poster/parse'&&method==='POST'){
       try{const base64=String(data.dataUrl||'').split(',')[1],mime=String(data.dataUrl||'').match(/^data:([^;]+)/)?.[1]||'image/jpeg'; const prompt='Read this event poster and return ONLY valid JSON with keys eventDate (YYYY-MM-DD), eventTime (HH:MM 24-hour), familyPersonName, eventType, day, venueLocation, city, googleMapsLink, details. Use empty strings when unknown.'; const r=await geminiGenerate(db.settings.geminiApiKey,[{text:prompt},{inlineData:{mimeType:mime,data:base64}}]); return json(extractJson(r.text));}catch(e){return json({error:e.message},400)}
